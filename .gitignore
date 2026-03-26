@@ -8,3 +8,4 @@ coverage/
 !.env.example
 package.json
 history.db
+frontend.env
