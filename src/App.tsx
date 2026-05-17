@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { AlertCircle, Download, RefreshCw, LogOut, Lock, User, Eye, EyeOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -165,6 +165,8 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
   const [status, setStatus] = useState<{ status: string; botStarted: boolean } | null>(null);
   const [glycemias, setGlycemias] = useState<Glycemia[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showRangePicker, setShowRangePicker] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
 
   const authFetch = useCallback((url: string) =>
     fetch(`${API_BASE}${url}`, { headers: { Authorization: `Bearer ${token}` } }), [token]);
@@ -200,32 +202,50 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const exportToXlsx = () => {
-    const wb = XLSX.utils.book_new();
-    const data = glycemias.map((g) => ({
-      ID: g.id,
-      'Nivel de Glucosa': g.glucose_level,
-      'Tipo de Comida': mealTypeLabels[g.meal_type] || g.meal_type,
-      Fecha: formatDate(g.timestamp),
-      Hora: formatHour(g.timestamp),
-      Nota: g.note || '',
-    }));
-    const ws = XLSX.utils.json_to_sheet(data);
-
-    ws['!cols'] = [{ wch: 6 }, { wch: 18 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 30 }];
-
-    const headerStyle = {
-      font: { bold: true, color: { rgb: "FFFFFF" } },
-      fill: { fgColor: { rgb: "141414" } },
-      alignment: { horizontal: "center" }
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setShowRangePicker(false);
+      }
     };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
-    ['A1', 'B1', 'C1', 'D1', 'E1', 'F1'].forEach(cell => {
-      if (ws[cell]) ws[cell].s = headerStyle;
-    });
-
-    XLSX.utils.book_append_sheet(wb, ws, 'glucosa');
-    XLSX.writeFile(wb, `glucosa_${new Date().toLocaleDateString('es-CR').replace(/\//g, '-')}.xlsx`);
+  const handleExport = async (selectedRange: string) => {
+    let url: string;
+    if (selectedRange === 'all') {
+      url = '/api/glycemias';
+    } else {
+      url = `/api/glycemias?days=${selectedRange}`;
+    }
+    try {
+      const res = await authFetch(url);
+      const data: Glycemia[] = await res.json();
+      const wb = XLSX.utils.book_new();
+      const xlsxData = data.map((g) => ({
+        ID: g.id,
+        'Nivel de Glucosa': g.glucose_level,
+        'Tipo de Comida': mealTypeLabels[g.meal_type] || g.meal_type,
+        Fecha: formatDate(g.timestamp),
+        Hora: formatHour(g.timestamp),
+        Nota: g.note || '',
+      }));
+      const ws = XLSX.utils.json_to_sheet(xlsxData);
+      ws['!cols'] = [{ wch: 6 }, { wch: 18 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 30 }];
+      const headerStyle = {
+        font: { bold: true, color: { rgb: "FFFFFF" } },
+        fill: { fgColor: { rgb: "141414" } },
+        alignment: { horizontal: "center" }
+      };
+      ['A1', 'B1', 'C1', 'D1', 'E1', 'F1'].forEach(cell => {
+        if (ws[cell]) ws[cell].s = headerStyle;
+      });
+      XLSX.utils.book_append_sheet(wb, ws, 'glucosa');
+      XLSX.writeFile(wb, `glucosa_${new Date().toLocaleDateString('es-CR').replace(/\//g, '-')}.xlsx`);
+    } catch (err) {
+      console.error('Error al exportar:', err);
+    }
   };
 
   // glycemias are sorted oldest→newest from API, display with newest at top
@@ -301,14 +321,34 @@ function Dashboard({ token, onLogout }: { token: string; onLogout: () => void })
           className="border border-[#141414] p-4 md:p-6 bg-white shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] mb-6"
         >
           <div className="flex flex-row justify-between items-center mb-6 gap-2">
-            <h2 className="font-serif italic text-xl md:text-2xl">Últimos 7 días</h2>
+            <h2 className="font-serif italic text-xl md:text-2xl">Últimos 30 días</h2>
             <div className="flex gap-2">
               <button onClick={fetchData} className="p-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">
                 <RefreshCw size={14} />
               </button>
-              <button onClick={exportToXlsx} className="flex items-center gap-2 bg-[#141414] text-[#E4E3E0] px-3 py-2 text-[10px] uppercase font-bold hover:bg-gray-800 transition-colors">
-                <Download size={14} /> <span className="hidden sm:inline">Exportar</span>
-              </button>
+              <div className="relative" ref={pickerRef}>
+                <button onClick={() => setShowRangePicker(!showRangePicker)} className="flex items-center gap-2 bg-[#141414] text-[#E4E3E0] px-3 py-2 text-[10px] uppercase font-bold hover:bg-gray-800 transition-colors">
+                  <Download size={14} /> <span className="hidden sm:inline">Exportar</span>
+                </button>
+                {showRangePicker && (
+                  <div className="absolute right-0 top-full mt-1 bg-white border border-[#141414] shadow-[2px_2px_0px_0px_rgba(20,20,20,1)] z-10 min-w-[120px]">
+                    {[
+                      { label: '7 días', value: '7' },
+                      { label: '30 días', value: '30' },
+                      { label: '90 días', value: '90' },
+                      { label: 'Todo', value: 'all' },
+                    ].map(opt => (
+                      <button
+                        key={opt.value}
+                        onClick={() => { handleExport(opt.value); setShowRangePicker(false); }}
+                        className="block w-full text-left px-3 py-2 text-[10px] uppercase font-bold hover:bg-gray-100 transition-colors text-[#141414]"
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 

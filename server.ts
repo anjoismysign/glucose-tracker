@@ -352,15 +352,35 @@ async function startServer() {
   });
 
   app.get("/api/glycemias", authMiddleware, (req, res) => {
-    const days = parseInt(req.query.days as string) || 7;
-    const cutoff = Math.floor((Date.now() - days * 24 * 60 * 60 * 1000) / 1000);
+    const days = parseInt(req.query.days as string);
+    const from = parseInt(req.query.from as string);
+    const to = parseInt(req.query.to as string);
 
-    const rows = db.prepare(`
-      SELECT * FROM glycemias
-      WHERE timestamp >= ?
-      ORDER BY timestamp ASC
-    `).all(cutoff) as any[];
+    let sql = "SELECT * FROM glycemias";
+    const conditions: string[] = [];
+    const params: number[] = [];
 
+    if (!Number.isNaN(days) && Number.isFinite(days)) {
+      conditions.push("timestamp >= ?");
+      params.push(Math.floor((Date.now() - days * 24 * 60 * 60 * 1000) / 1000));
+    } else {
+      if (!Number.isNaN(from) && Number.isFinite(from)) {
+        conditions.push("timestamp >= ?");
+        params.push(from);
+      }
+      if (!Number.isNaN(to) && Number.isFinite(to)) {
+        conditions.push("timestamp <= ?");
+        params.push(to);
+      }
+    }
+
+    if (conditions.length > 0) {
+      sql += " WHERE " + conditions.join(" AND ");
+    }
+
+    sql += " ORDER BY timestamp ASC";
+
+    const rows = db.prepare(sql).all(...params) as any[];
     res.json(rows);
   });
 
